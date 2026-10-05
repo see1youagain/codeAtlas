@@ -1,0 +1,10 @@
+.git
+.env
+.gocache
+.gomodcache
+runtime
+artifacts
+web/node_modules
+web/dist
+coverage.out
+*.db

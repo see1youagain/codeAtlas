@@ -1,0 +1,35 @@
+{
+  "repository": "video-platform-microservice",
+  "cases": [
+    {
+      "id": "gateway-rate-limit-01",
+      "question": "多网关实例共享令牌桶时，令牌如何恢复，为什么不会重复恢复？",
+      "must_cite": true,
+      "focus": ["Redis", "Lua", "last_refill", "lazy refill", "atomicity"]
+    },
+    {
+      "id": "circuit-breaker-01",
+      "question": "项目中的熔断器按服务、接口还是实例统计？实例摘除和熔断有什么区别？",
+      "must_cite": true,
+      "focus": ["breaker key", "service discovery", "instance", "fallback"]
+    },
+    {
+      "id": "upload-chain-01",
+      "question": "从分片上传到合并，再到视频管理和转码的完整调用链是什么？",
+      "must_cite": true,
+      "focus": ["upload", "merge", "Kafka", "outbox", "transcode"]
+    },
+    {
+      "id": "auth-chain-01",
+      "question": "鉴权在网关和用户服务之间如何分工，身份如何向下游传播？",
+      "must_cite": true,
+      "focus": ["gateway", "user", "JWT", "metadata", "trace_id"]
+    },
+    {
+      "id": "change-plan-01",
+      "requirement": "为分片合并接口增加幂等保护",
+      "mode": "plan",
+      "must_include": ["影响面", "测试", "风险", "回滚", "审批边界"]
+    }
+  ]
+}

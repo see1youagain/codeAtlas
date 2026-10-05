@@ -1,0 +1,55 @@
+# Secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+
+# Go
+bin/
+.gocache/
+.gomodcache/
+coverage.out
+
+# Node / React
+node_modules/
+dist/
+.vite/
+!internal/server/web/dist/
+!internal/server/web/dist/**
+
+# Runtime data
+artifacts/repo-maps/*
+artifacts/runs/*
+artifacts/eval-reports/*
+!artifacts/README.md
+runtime/
+workspaces/
+worktrees/
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs and local configuration
+*.log
+config.local.*
+
+# Local notes: publish only user-facing documentation and license notices
+*.md
+!/README.md
+!/THIRD_PARTY_NOTICES.md
+!/docs/SECURITY.md
+/stages/
+/artifacts/
+/.vscode/
+*.db-*
+*.sqlite-*
+*.sqlite3-*

@@ -12,6 +12,7 @@ import (
 
 	"github.com/lizhao/codeatlas/internal/agent"
 	"github.com/lizhao/codeatlas/internal/execution"
+	"github.com/lizhao/codeatlas/internal/memory"
 	"github.com/lizhao/codeatlas/internal/model"
 	"github.com/lizhao/codeatlas/internal/project"
 	"github.com/lizhao/codeatlas/internal/repository"
@@ -35,10 +36,35 @@ type Harness struct {
 	timeout    time.Duration
 	write      bool
 	mu         sync.Mutex
+	memory     *memory.Manager
 }
 
 func New(researcher *agent.ReAct, planner *agent.Planner, executor *execution.Executor, workspace *repository.Workspace, profile *project.Profile, persistence *store.Store, writeEnabled bool) *Harness {
-	return &Harness{researcher: researcher, planner: planner, executor: executor, workspace: workspace, profile: profile, store: persistence, timeout: 75 * time.Second, write: writeEnabled}
+	memories := memory.New(persistence, workspace)
+	if researcher != nil {
+		researcher.SetMemory(memories)
+	}
+	return &Harness{researcher: researcher, planner: planner, executor: executor, workspace: workspace, profile: profile, store: persistence, timeout: 75 * time.Second, write: writeEnabled, memory: memories}
+}
+
+func (h *Harness) Memories(ctx context.Context) ([]model.ResearchMemory, error) {
+	return h.memory.List(ctx)
+}
+func (h *Harness) DeleteMemory(ctx context.Context, id string) error { return h.memory.Delete(ctx, id) }
+
+func (h *Harness) DeleteConversation(ctx context.Context, id string) error {
+	return h.memory.DeleteConversation(ctx, id)
+}
+
+func requestOptions(sessionID string, useMemory *bool) (agent.RunOptions, error) {
+	if !memory.ValidSession(sessionID) {
+		return agent.RunOptions{}, errors.New("session_id must contain 8-80 letters, digits, underscores or hyphens")
+	}
+	if sessionID == "" {
+		sessionID = security.ID("session")
+	}
+	enabled := useMemory == nil || *useMemory
+	return agent.RunOptions{SessionID: sessionID, UseMemory: enabled}, nil
 }
 
 func (h *Harness) Roles() []Role {
@@ -58,33 +84,58 @@ func (h *Harness) Roles() []Role {
 func (h *Harness) Profile() *project.Profile { return h.profile }
 
 func (h *Harness) Ask(ctx context.Context, runID, question string) (model.AskResponse, error) {
+	return h.AskWithOptions(ctx, runID, model.AskRequest{Question: question})
+}
+
+func (h *Harness) AskWithOptions(ctx context.Context, runID string, request model.AskRequest) (model.AskResponse, error) {
+	question := request.Question
 	if err := validateInput(question); err != nil {
+		return model.AskResponse{}, err
+	}
+	options, err := requestOptions(request.SessionID, request.UseMemory)
+	if err != nil {
 		return model.AskResponse{}, err
 	}
 	runCtx, cancel := context.WithTimeout(ctx, h.timeout)
 	defer cancel()
-	response, err := h.researcher.Run(runCtx, runID, question)
-	if err == nil {
-		h.persistTrace(ctx, runID, response.Trace)
-	}
+	response, err := h.researcher.RunWithOptions(runCtx, runID, question, options)
+	h.persistTrace(ctx, runID, response.Trace)
 	return response, err
 }
 
 func (h *Harness) Plan(ctx context.Context, runID, requirement string) (model.PlanResponse, error) {
+	return h.PlanWithOptions(ctx, runID, model.PlanRequest{Requirement: requirement})
+}
+
+func (h *Harness) PlanWithOptions(ctx context.Context, runID string, request model.PlanRequest) (model.PlanResponse, error) {
+	requirement := request.Requirement
 	if err := validateInput(requirement); err != nil {
+		return model.PlanResponse{}, err
+	}
+	options, err := requestOptions(request.SessionID, request.UseMemory)
+	if err != nil {
 		return model.PlanResponse{}, err
 	}
 	runCtx, cancel := context.WithTimeout(ctx, 2*h.timeout)
 	defer cancel()
 	investigationQuestion := "请只读调查下面修改需求的当前实现、可能影响文件和调用链，为架构师提供证据，不要修改代码：\n" + requirement
-	investigation, err := h.researcher.Run(runCtx, runID+"-research", investigationQuestion)
+	investigation, err := h.researcher.RunWithOptions(runCtx, runID+"-research", investigationQuestion, options)
 	if err != nil {
+		h.persistTrace(ctx, runID, investigation.Trace)
 		return model.PlanResponse{}, fmt.Errorf("research phase failed: %w", err)
+	}
+	if h.workspace.CurrentRevision(runCtx) != investigation.Revision {
+		return model.PlanResponse{}, errors.New("repository revision changed during investigation; replan is required")
+	}
+	if _, err := h.workspace.Refresh(runCtx); err != nil {
+		return model.PlanResponse{}, err
 	}
 	response, err := h.planner.Create(runCtx, runID, requirement, investigation.Answer, investigation.Citations)
 	if err != nil {
+		h.persistTrace(ctx, runID, append(investigation.Trace, model.TraceEvent{At: time.Now().UTC(), Role: "architect", Type: "failure", Name: "plan_failed", Success: false, Message: err.Error()}))
 		return model.PlanResponse{}, err
 	}
+	response.SessionID = options.SessionID
 	response.Trace = append(investigation.Trace, response.Trace...)
 	if err := h.store.SavePlan(ctx, response.Record); err != nil {
 		return model.PlanResponse{}, err
@@ -117,7 +168,7 @@ func (h *Harness) Approve(ctx context.Context, planID string, request model.Appr
 	if request.PlanDigest != plan.Digest || request.BaseRevision != plan.BaseRevision {
 		return nil, errors.New("approval does not match the plan digest and base revision")
 	}
-	if h.workspace.Info().Revision != plan.BaseRevision {
+	if h.workspace.CurrentRevision(ctx) != plan.BaseRevision {
 		return nil, errors.New("repository revision changed; replan is required")
 	}
 	if err := validateApprovalScope(plan, &request, h.profile); err != nil {
@@ -161,7 +212,7 @@ func (h *Harness) Execute(ctx context.Context, planID, token string) (*model.Exe
 	if subtle.ConstantTimeCompare([]byte(providedHash), []byte(approval.TokenHash)) != 1 {
 		return nil, errors.New("invalid approval token")
 	}
-	if approval.PlanDigest != plan.Digest || approval.BaseRevision != plan.BaseRevision || h.workspace.Info().Revision != plan.BaseRevision {
+	if approval.PlanDigest != plan.Digest || approval.BaseRevision != plan.BaseRevision || h.workspace.CurrentRevision(ctx) != plan.BaseRevision {
 		return nil, errors.New("approval is stale; replan is required")
 	}
 	plan.Status = model.PlanRunning
@@ -214,6 +265,9 @@ func (h *Harness) Events(ctx context.Context, runID string) ([]model.TraceEvent,
 }
 
 func (h *Harness) persistTrace(ctx context.Context, runID string, events []model.TraceEvent) {
+	// A canceled model request must not erase the trace needed to diagnose it.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+	defer cancel()
 	for _, event := range events {
 		_ = h.store.AppendEvent(ctx, runID, event)
 	}

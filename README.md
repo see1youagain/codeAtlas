@@ -40,6 +40,14 @@ CodeAtlas 是一个面向真实代码仓库的、可自托管的知识问答与�
 
 写流程默认关闭。只有设置 `ENABLE_WRITE=true`、配置管理令牌并由用户批准具体计划后，Developer 才能在 Runtime Worktree 中修改；源仓库始终只读，也不会自动 Merge 或 Push。
 
+## 调查记忆
+
+成功问答会保存有限的仓库调查记录。新问题按词面匹配最多召回 3 条历史线索，并校验实时 Git Revision、已记录证据文件的内容哈希和 30 天有效期；单仓库最多保留 100 条。模型必须重新读取当前代码后引用，记忆不授予修改权限。
+
+Ask/Plan 支持 `session_id` 和 `use_memory`：首次请求可不传会话 ID，响应会返回新 ID；后续请求传回同一 ID，可为模型提供最近 4 轮问答以理解追问。会话记录有效期为 7 天，每会话保留 10 轮；它们仅用于理解上下文，旧引用不算当前证据。`use_memory:false` 同时禁用本次调查记忆及会话记录的读取与写入。
+
+Web 控制台支持记忆开关、新会话、调查记忆查看与删除，以及删除当前会话记录。管理员使用 Bearer Token 调用 `GET /api/v1/memories` 查看、`DELETE /api/v1/memories/{memoryID}` 删除调查记录，或 `DELETE /api/v1/sessions/{sessionID}` 删除会话记录，独立于代码写入开关。新会话不删除已有调查记忆。尚未实现用户偏好、语义检索或经人工确认的经验提炼，也未测量真实模型的效率提升。
+
 ## Harness 角色
 
 | 角色 | 当前职责 | 工具权限 |
@@ -105,6 +113,9 @@ Compose 将宿主机仓库挂载到 `/workspace/repository:ro`，SQLite、裸镜
 | POST | `/api/v1/plans/{id}/execute` | 在隔离 Worktree 执行 |
 | DELETE | `/api/v1/plans/{id}/executions/{executionId}` | 丢弃 Runtime Worktree |
 | POST | `/api/v1/knowledge/refresh` | 生成 Revision 知识影响报告 |
+| GET | `/api/v1/memories` | 管理员查看本仓库调查记忆及有效状态 |
+| DELETE | `/api/v1/memories/{memoryID}` | 管理员删除调查记录 |
+| DELETE | `/api/v1/sessions/{sessionID}` | 管理员删除当前仓库的会话记录 |
 | POST | `/mcp` | 公开只读 MCP 工具 |
 | POST | `/mcp/admin` | Bearer 保护的管理 MCP 工具 |
 
@@ -112,11 +123,12 @@ Compose 将宿主机仓库挂载到 `/workspace/repository:ro`，SQLite、裸镜
 
 ```json
 {
-  "question": "分片上传完成后，视频转码是如何触发的？"
+  "question": "分片上传完成后，视频转码是如何触发的？",
+  "use_memory": true
 }
 ```
 
-响应包含 `run_id`、`revision`、`answer`、`citations` 和 `trace`。回答没有有效引用时，Citation Gate 会拒绝输出。
+响应包含 `session_id`、`run_id`、`revision`、`answer`、`citations` 和 `trace`。回答没有有效引用时，Citation Gate 会拒绝输出；编号必须来自本轮证据，行号和代码片段会重新核对。Ask 失败的 Trace 也会保存，可通过 Run Events 接口查阅。
 
 ## 目录
 
@@ -132,9 +144,11 @@ internal/server/            HTTP API 与内嵌 Web Demo
 internal/execution/         Developer、QA 与 Reviewer 执行闭环
 internal/worktree/          裸镜像和隔离 Worktree
 internal/store/             SQLite Plan/Event/Approval/Execution
+internal/memory/            调查记忆、会话上下文、过期与召回策略
 internal/mcpserver/         官方 SDK Streamable HTTP MCP
 web/                        React 控制台
 evals/                      视频微服务专项回归问题集
+stages/                     分阶段需求、开发、验收和复盘记录
 ```
 
 ## 开发阶段
@@ -144,7 +158,7 @@ evals/                      视频微服务专项回归问题集
 3. **Stage 03 — Safe Change（已完成）**：摘要/Revision 审批、Runtime Worktree、受控编辑、基线/回归测试、Diff Scope Gate。
 4. **Stage 04 — Eval & Delivery（已完成）**：React、SQLite、MCP、Docker Compose、专项 Case、真实仓库 Smoke Test；真实模型评分需自行配置密钥。
 
-权限与部署边界见 [安全模型](./docs/SECURITY.md)。
+完整需求见 [PRD](./PRD.md)，架构与边界见 [ARCHITECTURE](./ARCHITECTURE.md)，当前完成度见 [STATUS](./STATUS.md)。实际问题与修复记录在 [开发日志](./docs/DEVELOPMENT_LOG.md)，自动化验证见 [测试报告](./TEST_REPORT.md)，面试准备见 [项目面经](./项目面经.md)。权限与部署边界见 [安全模型](./docs/SECURITY.md)。
 
 ## 一句话项目介绍
 

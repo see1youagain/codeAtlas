@@ -83,18 +83,32 @@ func (m *Manager) Discard(ctx context.Context, workspace *Workspace) error {
 }
 
 func (m *Manager) Diff(ctx context.Context, workspace *Workspace, revision string) (string, []string, error) {
+	// Only the isolated index changes. Intent-to-add exposes new files to diff
+	// without creating a commit or staging their content as an approved change.
+	untracked, err := commandStdout(ctx, workspace.Path, "git", "ls-files", "--others", "--exclude-standard", "-z")
+	if err != nil {
+		return "", nil, fmt.Errorf("list new files: %w", err)
+	}
+	for _, path := range strings.Split(untracked, "\x00") {
+		if path == "" {
+			continue
+		}
+		if _, err := commandStdout(ctx, workspace.Path, "git", "add", "--intent-to-add", "--", path); err != nil {
+			return "", nil, fmt.Errorf("include new file in diff: %w", err)
+		}
+	}
 	diff, err := commandStdout(ctx, workspace.Path, "git", "diff", "--no-ext-diff", "--unified=3", revision, "--")
 	if err != nil {
 		return "", nil, fmt.Errorf("read diff: %w", err)
 	}
-	nameOutput, err := commandStdout(ctx, workspace.Path, "git", "diff", "--name-only", revision, "--")
+	nameOutput, err := commandStdout(ctx, workspace.Path, "git", "diff", "--name-only", "-z", revision, "--")
 	if err != nil {
 		return "", nil, fmt.Errorf("read changed files: %w", err)
 	}
 	files := make([]string, 0)
-	for _, line := range strings.Split(strings.TrimSpace(nameOutput), "\n") {
+	for _, line := range strings.Split(nameOutput, "\x00") {
 		if line != "" {
-			files = append(files, filepath.ToSlash(strings.TrimSpace(line)))
+			files = append(files, filepath.ToSlash(line))
 		}
 	}
 	if len(diff) > 1<<20 {

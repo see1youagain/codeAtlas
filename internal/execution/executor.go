@@ -190,6 +190,12 @@ func (e *Executor) executeAction(ctx context.Context, repo *repository.Workspace
 		if err != nil {
 			return "ERROR: " + err.Error()
 		}
+		// An explicitly approved created file must be reviewable even if ignored
+		// by the target project's .gitignore. This touches only the worktree index.
+		cmd := exec.CommandContext(ctx, "git", "-C", root, "add", "--intent-to-add", "--force", "--", stringInput(action.Input, "path"))
+		if output, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Sprintf("ERROR: include created file in diff: %v: %s", err, output)
+		}
 		return "OK: file created"
 	case "run_tests":
 		results := e.runSuites(ctx, root, approval.TestSuiteIDs)

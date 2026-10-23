@@ -22,10 +22,13 @@ type TraceEvent struct {
 }
 
 type AskRequest struct {
-	Question string `json:"question"`
+	Question  string `json:"question"`
+	SessionID string `json:"session_id,omitempty"`
+	UseMemory *bool  `json:"use_memory,omitempty"`
 }
 
 type AskResponse struct {
+	SessionID string       `json:"session_id,omitempty"`
 	RunID     string       `json:"run_id"`
 	Revision  string       `json:"revision"`
 	Answer    string       `json:"answer"`
@@ -35,14 +38,17 @@ type AskResponse struct {
 
 type PlanRequest struct {
 	Requirement string `json:"requirement"`
+	SessionID   string `json:"session_id,omitempty"`
+	UseMemory   *bool  `json:"use_memory,omitempty"`
 }
 
 type PlanResponse struct {
-	RunID    string       `json:"run_id"`
-	Revision string       `json:"revision"`
-	Plan     string       `json:"plan"`
-	Record   *ChangePlan  `json:"record,omitempty"`
-	Trace    []TraceEvent `json:"trace"`
+	SessionID string       `json:"session_id,omitempty"`
+	RunID     string       `json:"run_id"`
+	Revision  string       `json:"revision"`
+	Plan      string       `json:"plan"`
+	Record    *ChangePlan  `json:"record,omitempty"`
+	Trace     []TraceEvent `json:"trace"`
 }
 
 type ChangePlan struct {

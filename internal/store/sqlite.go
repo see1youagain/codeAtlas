@@ -45,6 +45,10 @@ func (s *Store) migrate(ctx context.Context) error {
 	statements := []string{
 		`PRAGMA journal_mode=WAL`,
 		`PRAGMA foreign_keys=ON`,
+		`CREATE TABLE IF NOT EXISTS research_memories (id TEXT PRIMARY KEY, repository_id TEXT NOT NULL, created_at INTEGER NOT NULL, payload BLOB NOT NULL)`,
+		`CREATE INDEX IF NOT EXISTS idx_memories_repository ON research_memories(repository_id,created_at)`,
+		`CREATE TABLE IF NOT EXISTS conversation_turns (sequence INTEGER PRIMARY KEY AUTOINCREMENT, repository_id TEXT NOT NULL, session_id TEXT NOT NULL, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, payload BLOB NOT NULL)`,
+		`CREATE INDEX IF NOT EXISTS idx_turns_session ON conversation_turns(repository_id,session_id,sequence)`,
 		`CREATE TABLE IF NOT EXISTS plans (id TEXT PRIMARY KEY, status TEXT NOT NULL, updated_at TEXT NOT NULL, payload BLOB NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS approvals (id TEXT PRIMARY KEY, plan_id TEXT NOT NULL UNIQUE, token_hash TEXT NOT NULL, created_at TEXT NOT NULL, payload BLOB NOT NULL, FOREIGN KEY(plan_id) REFERENCES plans(id))`,
 		`CREATE TABLE IF NOT EXISTS executions (id TEXT PRIMARY KEY, plan_id TEXT NOT NULL, status TEXT NOT NULL, updated_at TEXT NOT NULL, payload BLOB NOT NULL, FOREIGN KEY(plan_id) REFERENCES plans(id))`,

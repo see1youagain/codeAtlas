@@ -62,6 +62,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/runs/{runID}/events", s.events)
 	mux.Handle("POST /api/v1/knowledge/refresh", s.requireAdmin(http.HandlerFunc(s.knowledgeRefresh)))
 	mux.HandleFunc("GET /api/v1/knowledge/reports", s.knowledgeReports)
+	mux.Handle("GET /api/v1/memories", s.requireMemoryAdmin(http.HandlerFunc(s.memories)))
+	mux.Handle("DELETE /api/v1/memories/{memoryID}", s.requireMemoryAdmin(http.HandlerFunc(s.deleteMemory)))
+	mux.Handle("DELETE /api/v1/sessions/{sessionID}", s.requireMemoryAdmin(http.HandlerFunc(s.deleteConversation)))
 	mux.Handle("POST /mcp", s.mcp.Read)
 	mux.Handle("POST /mcp/admin", s.mcp.Admin)
 	return s.middleware(mux)
@@ -101,7 +104,7 @@ func (s *Server) ask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer s.release()
-	response, err := s.harness.Ask(r.Context(), requestID(r), request.Question)
+	response, err := s.harness.AskWithOptions(r.Context(), requestID(r), request)
 	if err != nil {
 		writeError(w, http.StatusUnprocessableEntity, err)
 		return
@@ -120,7 +123,7 @@ func (s *Server) plan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer s.release()
-	response, err := s.harness.Plan(r.Context(), requestID(r), request.Requirement)
+	response, err := s.harness.PlanWithOptions(r.Context(), requestID(r), request)
 	if err != nil {
 		writeError(w, http.StatusUnprocessableEntity, err)
 		return
@@ -232,6 +235,44 @@ func (s *Server) requireAdmin(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// Memory administration is independent of code-write ENABLE_WRITE.
+func (s *Server) requireMemoryAdmin(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		provided := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
+		if s.adminToken == "" || subtle.ConstantTimeCompare([]byte(provided), []byte(s.adminToken)) != 1 {
+			w.Header().Set("WWW-Authenticate", `Bearer realm="codeatlas-admin"`)
+			writeError(w, http.StatusUnauthorized, errors.New("memory administration requires ADMIN_TOKEN"))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (s *Server) memories(w http.ResponseWriter, r *http.Request) {
+	result, err := s.harness.Memories(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) deleteMemory(w http.ResponseWriter, r *http.Request) {
+	if err := s.harness.DeleteMemory(r.Context(), r.PathValue("memoryID")); err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) deleteConversation(w http.ResponseWriter, r *http.Request) {
+	if err := s.harness.DeleteConversation(r.Context(), r.PathValue("sessionID")); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) acquire(ctx context.Context) bool {
